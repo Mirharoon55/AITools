@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot Streamer (Mobile 1)</title>
+  <style>
+    body { font-family: sans-serif; background: #000; color: #fff; text-align: center; margin: 0; padding: 20px; }
+    video { width: 100%; max-width: 400px; border-radius: 8px; margin-top: 10px; background: #222; }
+    input, button { padding: 12px; font-size: 16px; margin: 5px; width: 80%; max-width: 300px; border-radius: 5px; border: none; }
+    button { background: #007bff; color: white; font-weight: bold; cursor: pointer; }
+    #status { margin-top: 15px; font-weight: bold; color: #ffcc00; }
+  </style>
+</head>
+<body>
+  <h2>Mobile 1: Capture Engine</h2>
+  <input type="text" id="apiKey" placeholder="Paste Gemini API Key Here">
+  <br>
+  <button id="startBtn">Start Copilot Feed</button>
+  <div id="status">Status: Disconnected</div>
+  <video id="webcam" autoplay playsinline muted></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+
+  <script>
+    let ws;
+    let frameInterval;
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas');
+    const statusDiv = document.getElementById('status');
+
+    document.getElementById('startBtn').onclick = async () => {
+      const apiKey = document.getElementById('apiKey').value.trim();
+      if (!apiKey) return alert("Please enter your API key!");
+
+      // Connect to Gemini Live API WebSocket endpoint
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        statusDiv.innerText = "Status: Connected. Initializing...";
+        
+        // Setup payload: Forces TEXT output modality and sets System Instruction
+        const setupMessage = {
+          setup: {
+            model: "models/gemini-2.5-flash",
+            generationConfig: {
+              responseModalities: ["TEXT"]
+            },
+            systemInstruction: {
+              parts: [{
+                text: `You are an expert .NET Microservices Interview Copilot. 
+                Evaluate the candidate's screen (video feed) and interviewer audio in real time. 
+                Whenever a technical question, code review task, or architecture comparison is requested, respond ONLY with concise, structured text, Markdown, and C# code snippets. 
+                Never generate audio responses. Focus on actionable answers, key trade-offs, and microservice best practices.`
+              }]
+            }
+          }
+        };
+        ws.send(JSON.stringify(setupMessage));
+        startStreaming();
+      };
+
+      ws.onmessage = (e) => {
+        // Echo server events to status for debugging
+        const data = JSON.parse(e.data);
+        if (data.serverContent) statusDiv.innerText = "Status: Processing & Streaming...";
+      };
+
+      ws.onclose = () => { statusDiv.innerText = "Status: Disconnected"; clearInterval(frameInterval); };
+      ws.onerror = (err) => { statusDiv.innerText = "Status: Error Connection Failed"; console.error(err); };
+    };
+
+    async function startStreaming() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
+        video.srcObject = stream;
+        statusDiv.innerText = "Status: Streaming Live Screen & Audio";
+
+        // Capture video frame every 750ms (approx 1.3 FPS)
+        const ctx = canvas.getContext('2d');
+        frameInterval = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            const base64Frame = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
+            
+            const realtimeMessage = {
+              realtimeInput: {
+                mediaChunks: [{
+                  mimeType: "image/jpeg",
+                  data: base64Frame
+                }]
+              }
+            };
+            ws.send(JSON.stringify(realtimeMessage));
+          }
+        }, 750);
+      } catch (e) {
+        alert("Camera/Microphone permission denied.");
+      }
+    }
+  </script>
+</body>
+</html>
